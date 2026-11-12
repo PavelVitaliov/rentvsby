@@ -1,0 +1,117 @@
+<!doctype html>
+<!-- Шаблон страницы-конвертера. Готовую страницу data/rvb-converter.html собирает python3 -I data/build_converter.py -->
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rent vs Buy: CSV в data.json</title>
+<style>
+  body { font: 16px/1.5 system-ui, sans-serif; max-width: 760px; margin: 32px auto; padding: 0 16px; color: #1d1d1f; background: #fff; }
+  #drop { display: block; border: 2px dashed #8a8a8e; border-radius: 12px; padding: 40px 16px; text-align: center; cursor: pointer; }
+  body.over #drop { border-color: #0a7d3c; background: #eef8f1; }
+  #status { font-weight: 600; }
+  #status.ok { color: #0a7d3c; }
+  #status.stop { color: #b3261e; }
+  #download { display: inline-block; padding: 10px 18px; background: #0a7d3c; color: #fff; border-radius: 8px; text-decoration: none; font-weight: 600; }
+  #download[hidden] { display: none; }
+  pre { background: #f5f5f7; padding: 12px; font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
+</style>
+</head>
+<body>
+<h1>Данные калькулятора Rent vs Buy</h1>
+<ol>
+  <li>Скачайте с сайта DLD файлы продаж <code>transactions-….csv</code> и аренды <code>rents-….csv</code>.</li>
+  <li>Перетащите в это окно <b>все</b> файлы из общей папки сразу.</li>
+  <li>Когда появится зелёная надпись, нажмите «Скачать data.json».</li>
+</ol>
+<label id="drop">Перетащите CSV сюда или нажмите, чтобы выбрать файлы
+  <input type="file" id="pick" multiple accept=".csv" hidden>
+</label>
+<p id="status">Загружаю Python: около 10 МБ, при следующих открытиях быстрее…</p>
+<p><a id="download" download="data.json" hidden>Скачать data.json</a></p>
+<pre id="report" hidden></pre>
+
+<script src="https://cdn.jsdelivr.net/pyodide/v314.0.7/full/pyodide.js" integrity="sha384-hYKrcQ7FiKU7f1c92md9N2eh7BoBVX4CPkNDfQyyVclsjZevvDOBUkajGcYk1EF8" crossorigin="anonymous"></script>
+<script>
+  // Вставляются при сборке: те же файлы, что у скрипта в Терминале
+  const FILES = {
+    'build_data.py': "%%build_data.py%%",
+    'data/settings.json': "%%settings.json%%",
+    'data/area-overrides.csv': "%%area-overrides.csv%%",
+  };
+  const $ = id => document.getElementById(id);
+  const show = (text, kind = '') => Object.assign($('status'), { textContent: text, className: kind });
+  const python = typeof loadPyodide === 'function' ? loadPyodide() : Promise.reject(new Error('нет загрузчика'));
+  python.then(() => show('Можно перетаскивать файлы.'), () => show('Не удалось загрузить Python: нужен интернет. Обновите страницу.', 'stop'));
+  let busy = false, run = 0;
+
+  // Тип по заголовку, а не по имени: файл могли переименовать. Скрипт ищет transactions-*.csv и rents-*.csv
+  async function nameFor(file) {
+    const header = (await file.slice(0, 2000).text()).split(/\r?\n/)[0];
+    const kind = header.includes('TRANSACTION_NUMBER') ? 'transactions' : header.includes('REGISTRATION_DATE') ? 'rents' : null;
+    if (!kind) return null;
+    const name = file.name.endsWith('.csv') ? file.name : file.name + '.csv';
+    return name.startsWith(kind + '-') ? name : `${kind}-${name}`;
+  }
+
+  async function convert(files) {
+    if (busy || !files.length) return;
+    busy = true;
+    $('download').hidden = $('report').hidden = true;
+    const root = `/run${++run}`;
+    let report = '';
+    try {
+      const names = await Promise.all(files.map(nameFor));
+      const bad = files.filter((file, i) => !names[i]).map(file => file.name);
+      if (bad.length) return show(`Это не файлы продаж или аренды DLD: ${bad.join(', ')}. Ничего не посчитано.`, 'stop');
+      const missing = [['transactions', 'продаж (transactions-….csv)'], ['rents', 'аренды (rents-….csv)']]
+        .filter(([kind]) => !names.some(name => name.startsWith(kind + '-'))).map(([, title]) => title);
+      if (missing.length) return show(`Не хватает файлов ${missing.join(' и ')}. Перетащите все файлы сразу.`, 'stop');
+      show('Считаю… обычно 5–30 секунд, страница может на это время замереть.');
+      const py = await python;
+      await new Promise(resolve => setTimeout(resolve, 50));  // дать браузеру нарисовать надпись: Python занимает страницу целиком
+      py.FS.mkdirTree(`${root}/data`);
+      for (const [path, text] of Object.entries(FILES)) py.FS.writeFile(`${root}/${path}`, text);
+      for (const [i, file] of files.entries()) py.FS.writeFile(`${root}/${names[i]}`, new Uint8Array(await file.arrayBuffer()));
+      py.setStdout({ batched: line => { report += line + '\n'; } });
+      py.globals.set('root', root);
+      await py.runPythonAsync(`
+import sys
+from pathlib import Path
+sys.path.insert(0, root)
+import build_data
+try:
+    build_data.main(Path(root))
+    stopped = None
+except SystemExit as stop:
+    stopped = str(stop)
+`);
+      const stopped = py.globals.get('stopped');
+      if (stopped) return show(`Остановка: ${stopped}`, 'stop');
+      const bytes = py.FS.readFile(`${root}/deploy/wp-content/rvb-test/data.json`);
+      const data = JSON.parse(new TextDecoder().decode(bytes));
+      const warnings = report.split('\n').filter(line => line.includes('ВНИМАНИЕ')).length;
+      $('download').href = URL.createObjectURL(new Blob([bytes], { type: 'application/json' }));
+      $('download').hidden = false;
+      show(`Готово: данные за ${data.periodFrom} — ${data.periodTo}, последняя дата ${data.asOf}, районов ${data.areas.length}, ${bytes.length} байт.`
+        + (warnings ? ` В отчёте предупреждений: ${warnings}, прочитайте их перед загрузкой.` : ''), 'ok');
+    } catch (error) {
+      show('Ошибка, data.json не готов. Обновите страницу и попробуйте ещё раз, текст ошибки ниже.', 'stop');
+      report += String(error);
+    } finally {
+      $('report').textContent = report;
+      $('report').hidden = !report;
+      python.then(py => {  // CSV занимают память вкладки: при повторном запуске их не должно быть вдвое больше
+        for (const name of py.FS.readdir(root)) if (name.endsWith('.csv')) py.FS.unlink(`${root}/${name}`);
+      }).catch(() => {});
+      busy = false;
+    }
+  }
+
+  $('pick').addEventListener('change', event => { convert([...event.target.files]); event.target.value = ''; });  // иначе повторный выбор тех же файлов не сработает
+  addEventListener('dragover', event => { event.preventDefault(); document.body.classList.add('over'); });
+  addEventListener('dragleave', event => { if (!event.relatedTarget) document.body.classList.remove('over'); });
+  addEventListener('drop', event => { event.preventDefault(); document.body.classList.remove('over'); convert([...event.dataTransfer.files]); });
+</script>
+</body>
+</html>

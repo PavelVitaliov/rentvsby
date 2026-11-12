@@ -1,0 +1,6 @@
+node_modules/
+__pycache__/
+.DS_Store
+*.csv
+!data/area-overrides.csv
+deploy/wp-content/rvb-test/data.json

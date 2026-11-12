@@ -1,0 +1,52 @@
+<!doctype html>
+<!-- Локальная проверка, на сервер не идёт. Параметры: mode=inline|floating, data=ok|missing|broken|none, root=10px|0.7vw|2.4vw|12px -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Rent vs buy demo</title>
+    <style>
+      /* Жёсткие стили страницы: виджет должен выглядеть так, будто их нет */
+      * {
+        letter-spacing: 3px;
+        text-transform: uppercase;
+        line-height: 3;
+      }
+      input,
+      select,
+      button,
+      dialog {
+        margin: 40px !important;
+        padding: 40px !important;
+        border: 8px solid red !important;
+        border-radius: 30px !important;
+        background: yellow !important;
+        color: red !important;
+        font-size: 40px !important;
+      }
+    </style>
+  </head>
+  <body>
+    <p>Page text before the widget.</p>
+    <button class="btn">Page button</button>
+    <div id="slot"></div>
+    <p>Page text after the widget.</p>
+    <script>
+      const params = new URLSearchParams(location.search);
+      const urls = {
+        ok: '../deploy/wp-content/rvb-test/data.json',
+        missing: '../deploy/wp-content/rvb-test/no-such-file.json',
+        broken: 'data:application/json,{"asOf":"not a date"}',
+      };
+
+      document.documentElement.style.fontSize = params.get('root');
+
+      const widget = document.createElement('rent-vs-buy');
+      widget.setAttribute('mode', params.get('mode') ?? 'inline');
+      const url = urls[params.get('data') ?? 'ok'];
+      if (url) widget.setAttribute('data-url', url);
+      document.getElementById('slot').append(widget);
+    </script>
+    <script src="../deploy/wp-content/rvb-test/rent-vs-buy.js"></script>
+  </body>
+</html>

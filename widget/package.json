@@ -1,0 +1,17 @@
+{
+  "name": "rent-vs-buy",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test src/*.test.ts",
+    "check": "tsc",
+    "build": "esbuild src/rent-vs-buy.ts --bundle --minify --format=iife --target=es2020 --outfile=../deploy/wp-content/rvb-test/rent-vs-buy.js"
+  },
+  "dependencies": {
+    "lit": "3.3.3"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "typescript": "7.0.2"
+  }
+}
